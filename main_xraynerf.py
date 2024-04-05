@@ -8,11 +8,14 @@ import resource
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 print(rlimit)
 resource.setrlimit(resource.RLIMIT_NOFILE, (65536, rlimit[1]))
+from itertools import chain
 
 import hydra
+from hydra.utils import instantiate
 
 from typing import Optional
 from omegaconf import DictConfig, OmegaConf
+from contextlib import contextmanager, nullcontext
 
 import torch
 import torch.nn as nn
@@ -20,6 +23,10 @@ import torch.nn.functional as F
 
 import torchvision
 from typing import Any, Callable, Dict, Optional, Tuple, List
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import LearningRateMonitor, EarlyStopping
+from lightning.pytorch.callbacks import StochasticWeightAveraging
+from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch import seed_everything, Trainer, LightningModule
 
 from pytorch3d.renderer.cameras import (
@@ -33,19 +40,42 @@ from pytorch3d.renderer.camera_utils import join_cameras_as_batch
 # from monai.networks.layers.factories import Norm
 # from generative.networks.nets import DiffusionModelUNet
 from omegaconf import OmegaConf
+from PIL import Image
+from pytorch3d.implicitron.dataset.dataset_base import FrameData
+from pytorch3d.implicitron.dataset.utils import DATASET_TYPE_KNOWN, DATASET_TYPE_UNKNOWN
+from pytorch3d.implicitron.dataset.rendered_mesh_dataset_map_provider import (
+    RenderedMeshDatasetMapProvider,
+)
 
 from pytorch3d.implicitron.models.generic_model import GenericModel
-from pytorch3d.implicitron.models.implicit_function.base import ImplicitFunctionBase
-from pytorch3d.implicitron.models.renderer.raymarcher import AccumulativeRaymarcherBase
+from pytorch3d.implicitron.models.implicit_function.base import (
+    ImplicitFunctionBase,
+    ImplicitronRayBundle,
+)
+from pytorch3d.implicitron.models.renderer.raymarcher import (
+    AccumulativeRaymarcherBase,
+    RaymarcherBase,
+)
 from pytorch3d.implicitron.models.renderer.base import (
+    BaseRenderer,
     RendererOutput,
     EvaluationMode,
+    ImplicitFunctionWrapper,
 )
+from pytorch3d.implicitron.models.renderer.multipass_ea import (
+    MultiPassEmissionAbsorptionRenderer,
+)
+from pytorch3d.implicitron.models.renderer.ray_point_refiner import RayPointRefiner
 from pytorch3d.implicitron.tools.config import (
+    get_default_args,
     registry,
     remove_unused_components,
+    run_auto_creation,
 )
+from pytorch3d.renderer.implicit.renderer import VolumeSampler
+from pytorch3d.vis.plotly_vis import plot_batch_individually, plot_scene
 from pytorch3d.renderer.implicit.raymarching import (
+    _check_density_bounds,
     _check_raymarcher_inputs,
     _shifted_cumprod,
 )
@@ -53,6 +83,8 @@ from pytorch3d.renderer.implicit.raymarching import (
 
 from datamodule import UnpairedDataModule
 from dvr.renderer import ReverseXRayVolumeRenderer
+from dvr.renderer import normalized
+from dvr.renderer import standardized
 
 
 def make_cameras_dea(
@@ -174,11 +206,7 @@ class AbsorptionEmissionRaymarcher(  # pyre-ignore: 13
         features = alpha * features + (1 - opacities) * self._bg_color
 
         return RendererOutput(
-            features=features,
-            depths=depth,
-            masks=opacities,
-            weights=weights,
-            aux=aux,
+            features=features, depths=depth, masks=opacities, weights=weights, aux=aux,
         )
 
 
@@ -464,6 +492,29 @@ class NVLightningModule(LightningModule):
                 + output_ct_hidden_random["objective"]
             )
 
+            # frames_xr_hidden = self._set_framedata(image2d=figure_xr_hidden, cameras=view_hidden, number=None, name=image2d_pth, category='xr')
+            # frames_ct_random = self._set_framedata(image2d=figure_ct_random, cameras=view_random, number=None, name=image3d_pth, category='ct')
+            # frames_ct_hidden = self._set_framedata(image2d=figure_ct_hidden, cameras=view_hidden, number=None, name=image3d_pth, category='ct')
+
+            # frames_xr_hidden_hidden = self._collate_framedata_list([frames_xr_hidden, frames_xr_hidden])
+            # frames_ct_hidden_hidden = self._collate_framedata_list([frames_ct_hidden, frames_ct_hidden])
+            # frames_ct_random_random = self._collate_framedata_list([frames_ct_random, frames_ct_random])
+            # frames_ct_hidden_random = self._collate_framedata_list([frames_ct_hidden, frames_ct_random])
+            # frames_ct_random_hidden = self._collate_framedata_list([frames_ct_random, frames_ct_hidden])
+
+            # evaluation_mode = EvaluationMode.EVALUATION if stage == "validation" else EvaluationMode.TRAINING
+            # output_xr_hidden_hidden = self.inv_renderer.forward(frames_xr_hidden_hidden, evaluation_mode=evaluation_mode)
+            # output_ct_hidden_hidden = self.inv_renderer.forward(frames_ct_hidden_hidden, evaluation_mode=evaluation_mode)
+            # output_ct_random_random = self.inv_renderer.forward(frames_ct_random_random, evaluation_mode=evaluation_mode)
+            # output_ct_hidden_random = self.inv_renderer.forward(frames_ct_hidden_random, evaluation_mode=evaluation_mode)
+            # output_ct_random_hidden = self.inv_renderer.forward(frames_ct_random_hidden, evaluation_mode=evaluation_mode)
+
+            # loss_rgb_mse = output_xr_hidden_hidden["loss_rgb_mse"] \
+            #              + output_ct_hidden_hidden["loss_rgb_mse"] \
+            #              + output_ct_random_random["loss_rgb_mse"] \
+            #              + output_ct_random_hidden["loss_rgb_mse"] \
+            #              + output_ct_hidden_random["loss_rgb_mse"] \
+
             self.log(
                 f"{stage}_im2d_loss",
                 im2d_loss,
@@ -473,7 +524,8 @@ class NVLightningModule(LightningModule):
                 sync_dist=True,
                 batch_size=B,
             )
-            
+            # print(output_xr_hidden_hidden["images_render"].shape, output_ct_random_hidden["images_render"].shape)
+
             # Visualization step
             if batch_idx == 0 and stage == "validation":
                 viz2d = torch.cat(

@@ -55,7 +55,7 @@ data:
   batch_size: 1
 
 model:  
-  phase: "ctproj" #"pixelnerf" "ctproj" #"ctxray"
+  phase: "inv" #"pixelnerf" "ctproj" #"ctxray"
   img_shape: ${data.img_shape}
   vol_shape: ${data.vol_shape}
   fov_depth: 256
