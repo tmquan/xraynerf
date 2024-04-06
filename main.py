@@ -205,6 +205,8 @@ class InverseXrayVolumeRenderer(nn.Module):
             .view(-1, 1, 12)
         )
 
+        # image2d = torch.rot90(image2d, 1, [2, 3])
+
         i03 = self.net2d3d_implicit(
             x=image2d, context=mat.reshape(B, 1, -1), timesteps=timesteps,
         ).view(-1, 1, self.fov_depth, self.img_shape, self.img_shape)
@@ -336,25 +338,25 @@ class NVLightningModule(LightningModule):
         B = image2d.shape[0]
 
         # Construct the random cameras, -1 and 1 are the same point in azimuths
-        dist_random = 6.0 * torch.ones(B, device=_device)
+        dist_random = 8 * torch.ones(B, device=_device)
         elev_random = torch.rand_like(dist_random) - 0.5
         azim_random = torch.rand_like(dist_random) * 2 - 1  # from [0 1) to [-1 1)
         view_random = make_cameras_dea(
-            dist_random, elev_random, azim_random, fov=16, znear=4, zfar=8
+            dist_random, elev_random, azim_random, fov=16, znear=6, zfar=10
         )
 
-        dist_second = 6.0 * torch.ones(B, device=_device)
+        dist_second = 8 * torch.ones(B, device=_device)
         elev_second = torch.rand_like(dist_second) - 0.5
         azim_second = torch.rand_like(dist_second) * 2 - 1  # from [0 1) to [-1 1)
         view_second = make_cameras_dea(
-            dist_second, elev_second, azim_second, fov=16, znear=4, zfar=8
+            dist_second, elev_second, azim_second, fov=16, znear=6, zfar=10
         )
 
-        dist_hidden = 6.0 * torch.ones(B, device=_device)
+        dist_hidden = 8 * torch.ones(B, device=_device)
         elev_hidden = torch.zeros(B, device=_device)
         azim_hidden = torch.zeros(B, device=_device)
         view_hidden = make_cameras_dea(
-            dist_hidden, elev_hidden, azim_hidden, fov=16, znear=4, zfar=8
+            dist_hidden, elev_hidden, azim_hidden, fov=16, znear=6, zfar=10
         )
 
         # Construct the samples in 2D
