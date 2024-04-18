@@ -80,40 +80,7 @@ class ForwardXRayVolumeRenderer(nn.Module):
             # volume_translation = [-0.5, -0.5, -0.5],
         )
         
-        # screen_RGBA, ray_bundles = self.renderer(cameras=cameras, volumes=volumes) #[...,:3]
-        # rays_points = ray_bundle_to_ray_points(ray_bundles)
-        # self.raysampler._stratified_sampling = stratified_sampling
-        # self.renderer = VolumeRenderer(raysampler=self.raysampler, raymarcher=self.raymarcher,)
         raymarcher = EmissionAbsorptionRaymarcher()  # BackToFront Raymarcher
-
-        # if stratified_sampling:
-        #     raysampler = NDCMultinomialRaysampler(
-        #         image_width=self.image_width, 
-        #         image_height=self.image_height, 
-        #         n_pts_per_ray=self.n_pts_per_ray, 
-        #         min_depth=self.min_depth, 
-        #         max_depth=self.max_depth, 
-        #         stratified_sampling=stratified_sampling
-        #     )
-        #     # raysampler = MonteCarloRaysampler(
-        #     #     min_x=-1.0,
-        #     #     max_x=+1.0,
-        #     #     min_y=-1.0,
-        #     #     max_y=+1.0,
-        #     #     n_rays_per_image=self.image_width*self.image_height,
-        #     #     n_pts_per_ray=self.n_pts_per_ray, 
-        #     #     min_depth=self.min_depth,
-        #     #     max_depth=self.max_depth,
-        #     # )
-        # else:
-        #     raysampler = NDCMultinomialRaysampler(
-        #         image_width=self.image_width, 
-        #         image_height=self.image_height, 
-        #         n_pts_per_ray=self.n_pts_per_ray, 
-        #         min_depth=self.min_depth, 
-        #         max_depth=self.max_depth, 
-        #         stratified_sampling=stratified_sampling
-        #     )
         raysampler = NDCMultinomialRaysampler(
                 image_width=self.image_width, 
                 image_height=self.image_height, 
@@ -156,7 +123,14 @@ class ReverseXRayVolumeRenderer(ForwardXRayVolumeRenderer):
         feat_dim: int = 3,
         stratified_sampling: bool = False,
     ):
-        super().__init__()
+        super().__init__(
+            image_width=image_width,
+            image_height=image_height,
+            n_pts_per_ray=n_pts_per_ray,
+            min_depth=min_depth,
+            max_depth=max_depth,
+            ndc_extent=ndc_extent
+        )
 
 
     def forward(self, 
@@ -175,45 +149,15 @@ class ReverseXRayVolumeRenderer(ForwardXRayVolumeRenderer):
             densities = torch.ones_like(image3d[:, [0]]) * scaling_factor
         else:
             densities = opacity * scaling_factor
-        # print(image3d.shape, densities.shape)
+            
         shape = max(image3d.shape[1], image3d.shape[2])
         volumes = Volumes(
             features=features,
             densities=densities,
             voxel_size=2.0*float(self.ndc_extent)/shape,
-            # volume_translation = [-0.5, -0.5, -0.5],
         )
         
         raymarcher = AbsorptionEmissionRaymarcher()  # BackToFront Raymarcher
-
-        # if stratified_sampling:
-        #     raysampler = NDCMultinomialRaysampler(
-        #         image_width=self.image_width, 
-        #         image_height=self.image_height, 
-        #         n_pts_per_ray=self.n_pts_per_ray, 
-        #         min_depth=self.min_depth, 
-        #         max_depth=self.max_depth, 
-        #         stratified_sampling=stratified_sampling
-        #     )
-        #     # raysampler = MonteCarloRaysampler(
-        #     #     min_x=-1.0,
-        #     #     max_x=+1.0,
-        #     #     min_y=-1.0,
-        #     #     max_y=+1.0,
-        #     #     n_rays_per_image=self.image_width*self.image_height,
-        #     #     n_pts_per_ray=self.n_pts_per_ray, 
-        #     #     min_depth=self.min_depth,
-        #     #     max_depth=self.max_depth,
-        #     # )
-        # else:
-        #     raysampler = NDCMultinomialRaysampler(
-        #         image_width=self.image_width, 
-        #         image_height=self.image_height, 
-        #         n_pts_per_ray=self.n_pts_per_ray, 
-        #         min_depth=self.min_depth, 
-        #         max_depth=self.max_depth, 
-        #         stratified_sampling=stratified_sampling
-        #     )
         raysampler = NDCMultinomialRaysampler(
                 image_width=self.image_width, 
                 image_height=self.image_height, 
@@ -224,7 +168,7 @@ class ReverseXRayVolumeRenderer(ForwardXRayVolumeRenderer):
             )
         renderer = VolumeRenderer(raysampler=raysampler, raymarcher=raymarcher)  
         screen_RGBA, bundle = renderer(cameras=cameras, volumes=volumes)  # [...,:3]
-
+        
         screen_RGBA = screen_RGBA.permute(0, 3, 2, 1)  # 3 for NeRF
         if is_grayscale:
             screen_RGB = screen_RGBA[:, :].mean(dim=1, keepdim=True)

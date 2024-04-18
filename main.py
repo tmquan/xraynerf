@@ -109,6 +109,7 @@ def make_cameras_dea(
         return FoVOrthographicCameras(R=R, T=T, znear=znear, zfar=zfar).to(_device)
     return FoVPerspectiveCameras(R=R, T=T, fov=fov, znear=znear, zfar=zfar).to(_device)
 
+
 def init_weights(net, init_type='normal', init_gain=0.02):
     """Initialize network weights.
     Parameters:
@@ -170,7 +171,7 @@ class InverseXrayVolumeRenderer(nn.Module):
             with_conditioning=True,
             cross_attention_dim=12,  # flatR | flatT
         )    
-        init_weights(self.net2d3d, init_type='normal', init_gain=0.02)
+        init_weights(self.net2d3d, init_type='kaiming')
 
     def forward(
         self,
@@ -220,15 +221,15 @@ class InverseXrayVolumeRenderer(nn.Module):
                 padding_mode="border", 
                 # align_corners=True,
             )
+            volumes = values
+            # scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
+            # interp = []
+            # for scene_, n_view in zip(scenes, n_views):
+            #     value_ = scene_.mean(dim=0, keepdim=True)
+            #     interp.append(value_)
 
-            scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
-            interp = []
-            for scene_, n_view in zip(scenes, n_views):
-                value_ = scene_.mean(dim=0, keepdim=True)
-                interp.append(value_)
-
-            volumes = torch.cat(interp, dim=0)
-            return volumes
+            # volumes = torch.cat(interp, dim=0)
+            # return volumes
         else:
             pass
         return volumes
@@ -242,7 +243,7 @@ class NVLightningModule(LightningModule):
 
         self.model_cfg = model_cfg
         self.train_cfg = train_cfg
-
+        # print(self.model_cfg.img_shape, self.model_cfg.vol_shape, self.model_cfg.fov_depth)
         self.fwd_renderer = ReverseXRayVolumeRenderer(
             image_width=self.model_cfg.img_shape,
             image_height=self.model_cfg.img_shape,
@@ -300,13 +301,10 @@ class NVLightningModule(LightningModule):
         return T_new.clamp_(0, 1)
 
     def forward_screen(self, image3d, cameras, is_training=False):
-        image3d = self.correct_window(
-            image3d, a_min=-1024, a_max=3071, b_min=-512, b_max=3071
-        )
-        return self.fwd_renderer(
-            image3d, cameras, norm_type="standardized", stratified_sampling=is_training
-        )
-
+        # image3d = self.correct_window(image3d, a_min=-1024, a_max=3071, b_min=-512, b_max=3071)
+        project = self.fwd_renderer(image3d, cameras, norm_type="standardized", stratified_sampling=is_training)
+        return project
+    
     def forward_volume(
         self,
         image2d,
@@ -472,15 +470,60 @@ class NVLightningModule(LightningModule):
                     ],
                     dim=-2,
                 )
-
                 tensorboard = self.logger.experiment
-                grid2d = torchvision.utils.make_grid(
-                    viz2d, normalize=False, scale_each=False, nrow=1, padding=0
-                ).clamp(0, 1)
-                tensorboard.add_image(
-                    f"{stage}_df_samples", grid2d, self.current_epoch * B + batch_idx
-                )
-
+                grd2d = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0).clamp(0, 1)
+                tensorboard.add_image(f"{stage}_df_viz2d", grd2d, self.current_epoch * B + batch_idx)
+                
+                # tensorboard = self.logger.experiment
+                # viz2d = torch.cat(
+                #     [
+                #         torch.cat(
+                #             [
+                #                 image2d,
+                #                 figure_xr_origin_hidden_random,
+                #                 figure_xr_origin_hidden_hidden,
+                #             ],
+                #             dim=-2,
+                #         ).transpose(2, 3),
+                #         torch.cat(
+                #             [
+                #                 figure_ct_random,
+                #                 figure_ct_origin_random_random,
+                #                 figure_ct_origin_random_second,
+                #             ],
+                #             dim=-2,
+                #         ).transpose(2, 3),
+                #         torch.cat(
+                #             [
+                #                 figure_ct_second,
+                #                 figure_ct_origin_second_random,
+                #                 figure_ct_origin_second_second,
+                #             ],
+                #             dim=-2,
+                #         ).transpose(2, 3),
+                #     ],
+                #     dim=-2,
+                # )
+                # grd2d = torchvision.utils.make_grid(viz2d, normalize=False, scale_each=False, nrow=1, padding=0).clamp(0, 1)
+                # tensorboard.add_image(f"{stage}_df_viz2d", grd2d, self.current_epoch * B + batch_idx)
+                
+                # viz3d = torch.cat(
+                #     [
+                #         torch.cat(
+                #             [
+                #                 volume_xr_hidden_origin[..., self.model_cfg.vol_shape // 2, :],
+                #                 image3d[..., self.model_cfg.vol_shape // 2, :],
+                #                 volume_ct_random_origin[..., self.model_cfg.vol_shape // 2, :],
+                #                 volume_ct_second_origin[..., self.model_cfg.vol_shape // 2, :],
+                #             ],
+                #             dim=-2,
+                #         ).transpose(2, 3),
+                #     ],
+                #     dim=-2,
+                # )
+                # grd3d = torchvision.utils.make_grid(viz3d, normalize=False, scale_each=False, nrow=1, padding=0).clamp(0, 1)
+                # tensorboard.add_image(f"{stage}_df_viz3d", grd3d, self.current_epoch * B + batch_idx)
+                
             return loss
 
     def training_step(self, batch, batch_idx):
