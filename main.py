@@ -171,7 +171,7 @@ class InverseXrayVolumeRenderer(nn.Module):
             with_conditioning=True,
             cross_attention_dim=12,  # flatR | flatT
         )    
-        init_weights(self.net2d3d, init_type='normal', init_gain=0.01)
+        init_weights(self.net2d3d, init_type='normal', init_gain=0.02)
 
     def forward(
         self,

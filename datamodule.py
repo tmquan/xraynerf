@@ -191,16 +191,16 @@ class UnpairedDataModule(LightningDataModule):
                         ),  # Full range  # -200,  # 1500,
                     ]
                 ),
-                RandRotateDict(
-                    keys=["image3d"],
-                    prob=1.0,
-                    range_x=0.1,
-                    range_y=0.1,
-                    range_z=0.1,
-                    padding_mode="zeros",
-                    mode=["bilinear"],
-                    align_corners=True,
-                ),
+                # RandRotateDict(
+                #     keys=["image3d"],
+                #     prob=1.0,
+                #     range_x=0.1,
+                #     range_y=0.1,
+                #     range_z=0.1,
+                #     padding_mode="zeros",
+                #     mode=["bilinear"],
+                #     align_corners=True,
+                # ),
                 RandZoomDict(
                     keys=["image3d"],
                     prob=1.0,
