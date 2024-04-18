@@ -58,16 +58,16 @@ model:
   phase: "ctproj" #"pixelnerf" "ctproj" #"ctxray"
   img_shape: ${data.img_shape}
   vol_shape: ${data.vol_shape}
-  fov_depth: 800
+  fov_depth: 256
   batch_size: ${data.batch_size}
-  n_pts_per_ray: 800
+  n_pts_per_ray: 512
 
 train:
   ckpt: ${resume_from_checkpoint}
   strict: 1 if ${resume_from_checkpoint} is not None else 0
   lr: 1e-4
   alpha: 1
-  gamma: 1
+  gamma: 10
   lamda: 0.002
   batch_size: ${data.batch_size}
   epochs: 200

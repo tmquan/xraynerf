@@ -109,6 +109,36 @@ def make_cameras_dea(
         return FoVOrthographicCameras(R=R, T=T, znear=znear, zfar=zfar).to(_device)
     return FoVPerspectiveCameras(R=R, T=T, fov=fov, znear=znear, zfar=zfar).to(_device)
 
+def init_weights(net, init_type='normal', init_gain=0.02):
+    """Initialize network weights.
+    Parameters:
+        net (network)   -- network to be initialized
+        init_type (str) -- the name of an initialization method: normal | xavier | kaiming | orthogonal
+        init_gain (float)    -- scaling factor for normal, xavier and orthogonal.
+    We use 'normal' in the original pix2pix and CycleGAN paper. But xavier and kaiming might
+    work better for some applications. Feel free to try yourself.
+    """
+    def init_func(m):  # define the initialization function
+        classname = m.__class__.__name__
+        if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
+            if init_type == 'normal':
+                nn.init.normal_(m.weight.data, 0.0, init_gain)
+            elif init_type == 'xavier':
+                nn.init.xavier_normal_(m.weight.data, gain=init_gain)
+            elif init_type == 'kaiming':
+                nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+            elif init_type == 'orthogonal':
+                nn.init.orthogonal_(m.weight.data, gain=init_gain)
+            else:
+                raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
+            if hasattr(m, 'bias') and m.bias is not None:
+                nn.init.constant_(m.bias.data, 0.0)
+        elif classname.find('BatchNorm') != -1:  # BatchNorm Layer's weight is not a matrix; only normal distribution applies.
+            nn.init.normal_(m.weight.data, 1.0, init_gain)
+            nn.init.constant_(m.bias.data, 0.0)
+    # print('initialize network with %s' % init_type)
+    net.apply(init_func)  # apply the initialization function <init_func>
+    
 
 class InverseXrayVolumeRenderer(nn.Module):
     def __init__(
@@ -128,73 +158,37 @@ class InverseXrayVolumeRenderer(nn.Module):
         self.vol_shape = vol_shape
         self.fov_depth = fov_depth
         self.resample = resample
-        self.gradient = gradient
-        self.net2d3d_explicit = DiffusionModelUNet(
+        
+        self.net2d3d = DiffusionModelUNet(
             spatial_dims=2,
-            in_channels=2 if self.gradient else 1,  # Condition with straight/hidden view
+            in_channels=1,  # Condition with straight/hidden view
             out_channels=self.fov_depth,
-            num_channels=(128, 128, 256),
+            num_channels=(256, 256, 512),
             attention_levels=(False, False, True),
             num_res_blocks=1,
             num_head_channels=256,
             with_conditioning=True,
             cross_attention_dim=12,  # flatR | flatT
-        )
-
-        self.net2d3d_implicit = DiffusionModelUNet(
-            spatial_dims=2,
-            in_channels=2 if self.gradient else 1,  # Condition with straight/hidden view
-            out_channels=self.fov_depth,
-            num_channels=(128, 128, 256),
-            attention_levels=(False, False, True),
-            num_res_blocks=1,
-            num_head_channels=256,
-            with_conditioning=True,
-            cross_attention_dim=12,  # flatR | flatT
-        )
-
-        self.net3d3d = nn.Sequential(
-            Unet(
-                spatial_dims=3,
-                in_channels=1,
-                out_channels=6,
-                # channels=backbones[backbone],
-                # strides=(2, 2, 2, 2, 2),
-                # num_res_units=1,
-                channels=(128, 128, 256),
-                strides=(2, 2, 2, 2),
-                num_res_units=2,
-                kernel_size=3,
-                up_kernel_size=3,
-                act=("LeakyReLU", {"inplace": True}),
-                norm=Norm.INSTANCE,
-                dropout=0.5,
-            ),
-        )
+        )    
+        init_weights(self.net2d3d, init_type='normal', init_gain=0.02)
 
     def forward(
         self,
         image2d,
         cameras,
         resample=True,
-        timesteps=None,
         is_training=False,
-        with_gradients=True,
+        n_views=[2, 1],
     ):
         _device = image2d.device
         B = image2d.shape[0]
         dtype = image2d.dtype
-        if timesteps is None:
-            timesteps = torch.zeros((B), device=_device).long()
-
-        assert self.gradient == with_gradients
-        if with_gradients:
-            image2d = torch.cat(image_gradients(image2d), dim=1)
+        timesteps = torch.zeros((B), device=_device).long()
 
         detcams = cameras.clone()
         R = detcams.R
-        # T = detcams.T.unsqueeze_(-1)
-        T = torch.zeros_like(detcams.T.unsqueeze_(-1))
+        T = detcams.T.unsqueeze_(-1)
+        # T = torch.zeros_like(detcams.T.unsqueeze_(-1))
         inv = torch.cat([torch.inverse(R), -T], dim=-1)
 
         mat = (
@@ -205,38 +199,39 @@ class InverseXrayVolumeRenderer(nn.Module):
             .view(-1, 1, 12)
         )
 
-        # image2d = torch.rot90(image2d, 1, [2, 3])
+        image2d = torch.rot90(image2d, 1, [2, 3])
+        # image2d = torch.flip(image2d, [3])
 
-        i03 = self.net2d3d_implicit(
-            x=image2d, context=mat.reshape(B, 1, -1), timesteps=timesteps,
-        ).view(-1, 1, self.fov_depth, self.img_shape, self.img_shape)
+        density = self.net2d3d(x=image2d, context=mat.reshape(B, 1, -1), timesteps=timesteps)
+        density = density.view(-1, 1, self.fov_depth, self.img_shape, self.img_shape)
         
-        e23 = self.net2d3d_explicit(
-            x=image2d, context=mat.reshape(B, 1, -1), timesteps=timesteps,
-        ).view(-1, 1, self.fov_depth, self.img_shape, self.img_shape)
-
+        
         if resample:
-            grd = F.affine_grid(inv, i03.size()).type(dtype)
-            m23 = F.grid_sample(e23, grd)
-            sum = m23 + i03
-            vol = self.net3d3d(sum)
-            out = (
-                torch.concat(
-                    [
-                        torch.permute(vol[:, [0], ...], (0, 1, 2, 3, 4)),
-                        torch.permute(vol[:, [1], ...], (0, 1, 2, 4, 3)),
-                        torch.permute(vol[:, [2], ...], (0, 1, 3, 2, 4)),
-                        torch.permute(vol[:, [0], ...], (0, 1, 3, 4, 2)),
-                        torch.permute(vol[:, [1], ...], (0, 1, 4, 2, 3)),
-                        torch.permute(vol[:, [2], ...], (0, 1, 4, 3, 2)),
-                    ],
-                    dim=1,
-                ).mean(dim=1, keepdim=True)
-                + sum
+            z = torch.linspace(-1.0, 1.0, steps=self.vol_shape, device=_device)
+            y = torch.linspace(-1.0, 1.0, steps=self.vol_shape, device=_device)
+            x = torch.linspace(-1.0, 1.0, steps=self.vol_shape, device=_device)
+            coords = torch.stack(torch.meshgrid(x, y, z), dim=-1).view(-1, 3).unsqueeze(0).repeat(B, 1, 1)  # 1 DHW 3 to B DHW 3
+            # Process (resample) the volumes from ray views to ndc
+            points = cameras.transform_points_ndc(coords)  # world to ndc, 1 DHW 3
+            values = F.grid_sample(
+                density, 
+                points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3), 
+                mode="bilinear", 
+                padding_mode="border", 
+                # align_corners=True,
             )
+
+            scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
+            interp = []
+            for scene_, n_view in zip(scenes, n_views):
+                value_ = scene_.mean(dim=0, keepdim=True)
+                interp.append(value_)
+
+            volumes = torch.cat(interp, dim=0)
+            return volumes
         else:
             pass
-        return out
+        return volumes
 
 
 class NVLightningModule(LightningModule):
@@ -318,17 +313,12 @@ class NVLightningModule(LightningModule):
         cameras,
         n_views=[2, 1],
         resample=True,
-        timesteps=None,
         is_training=False,
-        with_gradients=False,
     ):
         _device = image2d.device
         B = image2d.shape[0]
         assert B == sum(n_views)  # batch must be equal to number of projections
-
-        results = self.inv_renderer(
-            image2d, cameras, resample, timesteps, is_training, with_gradients
-        )
+        results = self.inv_renderer(image2d, cameras, resample, is_training, n_views)
         return results
 
     def _common_step(self, batch, batch_idx, stage: Optional[str] = "evaluation"):
@@ -341,23 +331,17 @@ class NVLightningModule(LightningModule):
         dist_random = 8 * torch.ones(B, device=_device)
         elev_random = torch.rand_like(dist_random) - 0.5
         azim_random = torch.rand_like(dist_random) * 2 - 1  # from [0 1) to [-1 1)
-        view_random = make_cameras_dea(
-            dist_random, elev_random, azim_random, fov=16, znear=6, zfar=10
-        )
+        view_random = make_cameras_dea(dist_random, elev_random, azim_random, fov=16, znear=6, zfar=10)
 
         dist_second = 8 * torch.ones(B, device=_device)
         elev_second = torch.rand_like(dist_second) - 0.5
         azim_second = torch.rand_like(dist_second) * 2 - 1  # from [0 1) to [-1 1)
-        view_second = make_cameras_dea(
-            dist_second, elev_second, azim_second, fov=16, znear=6, zfar=10
-        )
+        view_second = make_cameras_dea(dist_second, elev_second, azim_second, fov=16, znear=6, zfar=10)
 
         dist_hidden = 8 * torch.ones(B, device=_device)
         elev_hidden = torch.zeros(B, device=_device)
         azim_hidden = torch.zeros(B, device=_device)
-        view_hidden = make_cameras_dea(
-            dist_hidden, elev_hidden, azim_hidden, fov=16, znear=6, zfar=10
-        )
+        view_hidden = make_cameras_dea(dist_hidden, elev_hidden, azim_hidden, fov=16, znear=6, zfar=10)
 
         # Construct the samples in 2D
         figure_xr_hidden = image2d
@@ -369,15 +353,11 @@ class NVLightningModule(LightningModule):
         else:
             # Reconstruct the Encoder-Decoder
             volume_dx_concat = self.forward_volume(
-                image2d=torch.cat(
-                    [figure_xr_hidden, figure_ct_random, figure_ct_second]
-                ),
+                image2d=torch.cat([figure_xr_hidden, figure_ct_random, figure_ct_second]),
                 cameras=join_cameras_as_batch([view_hidden, view_random, view_second]),
                 n_views=[1, 1, 1] * B,
                 resample=True,
-                timesteps=None,
                 is_training=(stage == "train"),
-                with_gradients=True,
             )
             (
                 volume_xr_hidden_origin,
@@ -456,10 +436,12 @@ class NVLightningModule(LightningModule):
 
             # Visualization step
             if batch_idx == 0:
+                zeros2d = torch.zeros_like(image2d)
                 viz2d = torch.cat(
                     [
                         torch.cat(
                             [
+                                zeros2d,
                                 image2d,
                                 volume_xr_hidden_origin[..., self.model_cfg.vol_shape // 2, :],
                                 figure_xr_origin_hidden_random,
@@ -469,6 +451,7 @@ class NVLightningModule(LightningModule):
                         ).transpose(2, 3),
                         torch.cat(
                             [
+                                image3d[..., self.model_cfg.vol_shape // 2, :],
                                 figure_ct_random,
                                 volume_ct_random_origin[..., self.model_cfg.vol_shape // 2, :],
                                 figure_ct_origin_random_random,
@@ -478,6 +461,7 @@ class NVLightningModule(LightningModule):
                         ).transpose(2, 3),
                         torch.cat(
                             [
+                                image3d[..., self.model_cfg.vol_shape // 2, :],
                                 figure_ct_second,
                                 volume_ct_second_origin[..., self.model_cfg.vol_shape // 2, :],
                                 figure_ct_origin_second_random,
