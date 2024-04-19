@@ -248,9 +248,9 @@ class NVLightningModule(LightningModule):
             image_width=self.model_cfg.img_shape,
             image_height=self.model_cfg.img_shape,
             n_pts_per_ray=self.model_cfg.n_pts_per_ray,
-            min_depth=4.0,
-            max_depth=8.0,
-            ndc_extent=1.0,
+            min_depth=self.model_cfg.min_depth,
+            max_depth=self.model_cfg.max_depth,
+            ndc_extent=self.model_cfg.ndc_extent,
         )
 
         self.inv_renderer = InverseXrayVolumeRenderer(
@@ -301,7 +301,7 @@ class NVLightningModule(LightningModule):
         return T_new.clamp_(0, 1)
 
     def forward_screen(self, image3d, cameras, is_training=False):
-        # image3d = self.correct_window(image3d, a_min=-1024, a_max=3071, b_min=-512, b_max=3071)
+        image3d = self.correct_window(image3d, a_min=-1024, a_max=3071, b_min=-512, b_max=3071)
         project = self.fwd_renderer(image3d, cameras, norm_type="standardized", stratified_sampling=is_training)
         return project
     
@@ -329,17 +329,17 @@ class NVLightningModule(LightningModule):
         dist_random = 8 * torch.ones(B, device=_device)
         elev_random = torch.rand_like(dist_random) - 0.5
         azim_random = torch.rand_like(dist_random) * 2 - 1  # from [0 1) to [-1 1)
-        view_random = make_cameras_dea(dist_random, elev_random, azim_random, fov=16, znear=6, zfar=10)
+        view_random = make_cameras_dea(dist_random, elev_random, azim_random, fov=self.model_cfg.fov, znear=self.model_cfg.min_depth, zfar=self.model_cfg.max_depth)
 
         dist_second = 8 * torch.ones(B, device=_device)
         elev_second = torch.rand_like(dist_second) - 0.5
         azim_second = torch.rand_like(dist_second) * 2 - 1  # from [0 1) to [-1 1)
-        view_second = make_cameras_dea(dist_second, elev_second, azim_second, fov=16, znear=6, zfar=10)
+        view_second = make_cameras_dea(dist_second, elev_second, azim_second, fov=self.model_cfg.fov, znear=self.model_cfg.min_depth, zfar=self.model_cfg.max_depth)
 
         dist_hidden = 8 * torch.ones(B, device=_device)
         elev_hidden = torch.zeros(B, device=_device)
         azim_hidden = torch.zeros(B, device=_device)
-        view_hidden = make_cameras_dea(dist_hidden, elev_hidden, azim_hidden, fov=16, znear=6, zfar=10)
+        view_hidden = make_cameras_dea(dist_hidden, elev_hidden, azim_hidden, fov=self.model_cfg.fov, znear=self.model_cfg.min_depth, zfar=self.model_cfg.max_depth)
 
         # Construct the samples in 2D
         figure_xr_hidden = image2d
