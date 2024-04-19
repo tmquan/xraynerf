@@ -400,7 +400,7 @@ class NVLightningModule(LightningModule):
                       + F.l1_loss(figure_ct_origin_random_second, figure_ct_second) \
                       + F.l1_loss(figure_ct_origin_second_random, figure_ct_random) \
                       + F.l1_loss(figure_ct_origin_second_second, figure_ct_second) \
-                      + F.l1_loss(figure_xr_origin_hidden_hidden, image2d) \
+                    #   + F.l1_loss(figure_xr_origin_hidden_hidden, image2d) \
 
             pc3d_loss = self.p3dloss(volume_xr_hidden_origin, image3d)
             im3d_loss += self.train_cfg.lamda * pc3d_loss
