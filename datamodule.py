@@ -438,7 +438,7 @@ class UnpairedDataModule(LightningDataModule):
                         #         b_max=1.0),
                         ScaleIntensityRangeDict(
                             keys=["image3d"],
-                            clip=False,
+                            clip=True,
                             a_min=-1024,
                             a_max=+3071,
                             b_min=0.0,

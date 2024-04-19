@@ -150,7 +150,6 @@ class InverseXrayVolumeRenderer(nn.Module):
         vol_shape=256,
         fov_depth=256,
         resample=True,
-        gradient=True,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -171,7 +170,7 @@ class InverseXrayVolumeRenderer(nn.Module):
             with_conditioning=True,
             cross_attention_dim=12,  # flatR | flatT
         )    
-        init_weights(self.net2d3d, init_type='normal', init_gain=0.02)
+        init_weights(self.net2d3d, init_type='kaiming', init_gain=0.02)
 
     def forward(
         self,
@@ -259,7 +258,6 @@ class NVLightningModule(LightningModule):
             img_shape=self.model_cfg.img_shape,
             vol_shape=self.model_cfg.vol_shape,
             fov_depth=self.model_cfg.fov_depth,
-            gradient=True,
         )
 
         self.p2dloss = PerceptualLoss(
