@@ -200,11 +200,10 @@ class InverseXrayVolumeRenderer(nn.Module):
         )
 
         image2d = torch.rot90(image2d, 1, [2, 3])
-        # image2d = torch.flip(image2d, [3])
+        image2d = torch.flip(image2d, [3])
 
         density = self.net2d3d(x=image2d, context=mat.reshape(B, 1, -1), timesteps=timesteps)
         density = density.view(-1, 1, self.fov_depth, self.img_shape, self.img_shape)
-        
         
         if resample:
             z = torch.linspace(-1.0, 1.0, steps=self.vol_shape, device=_device)
@@ -218,9 +217,9 @@ class InverseXrayVolumeRenderer(nn.Module):
                 points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3), 
                 mode="bilinear", 
                 padding_mode="border", 
-                # align_corners=True,
+                align_corners=True,
             )
-            volumes = values
+            volumes = torch.permute(values, [0, 1, 4, 3, 2])
             # scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
             # interp = []
             # for scene_, n_view in zip(scenes, n_views):
@@ -400,7 +399,8 @@ class NVLightningModule(LightningModule):
             im2d_loss = F.l1_loss(figure_ct_origin_random_random, figure_ct_random) \
                       + F.l1_loss(figure_ct_origin_random_second, figure_ct_second) \
                       + F.l1_loss(figure_ct_origin_second_random, figure_ct_random) \
-                      + F.l1_loss(figure_ct_origin_second_second, figure_ct_second)
+                      + F.l1_loss(figure_ct_origin_second_second, figure_ct_second) \
+                      + F.l1_loss(figure_xr_origin_hidden_hidden, image2d) \
 
             pc3d_loss = self.p3dloss(volume_xr_hidden_origin, image3d)
             im3d_loss += self.train_cfg.lamda * pc3d_loss
