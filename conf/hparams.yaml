@@ -58,9 +58,9 @@ model:
   phase: "ctproj" #"pixelnerf" "ctproj" #"ctxray"
   img_shape: ${data.img_shape}
   vol_shape: ${data.vol_shape}
-  fov_depth: 800
+  fov_depth: 512
   batch_size: ${data.batch_size}
-  n_pts_per_ray: 800
+  n_pts_per_ray: 512
   min_depth: 6.0
   max_depth: 10.0
   ndc_extent: 1.0
@@ -79,13 +79,13 @@ train:
   ema_decay: 0.9999 # `-1` disables it
 
 
-# resume_from_checkpoint: "logs/ctproj/version_0/checkpoints/epoch=159-step=320000.ckpt" #null
+# resume_from_checkpoint: "logs/ctproj/version_0/checkpoints/epoch=39-step=80000.ckpt"
 resume_from_checkpoint: null
 
 trainer:
   accelerator: auto
   devices: -1
-  precision: 32
+  precision: 16
   strategy: auto
   max_epochs: ${train.epochs}
   enable_model_summary: true

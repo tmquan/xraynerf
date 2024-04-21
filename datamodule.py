@@ -230,8 +230,8 @@ class UnpairedDataModule(LightningDataModule):
                     select_fn=(lambda x: x > 0),
                     margin=0,
                 ),
-                # RandZoomDict(keys=["image3d"], prob=1.0, min_zoom=0.9, max_zoom=1.0, padding_mode='constant', mode=["trilinear"], align_corners=True),
-                # RandZoomDict(keys=["image2d"], prob=1.0, min_zoom=0.9, max_zoom=1.0, padding_mode='constant', mode=["area"]),
+                RandZoomDict(keys=["image3d"], prob=1.0, min_zoom=0.9, max_zoom=1.0, padding_mode='constant', mode=["trilinear"], align_corners=True),
+                RandZoomDict(keys=["image2d"], prob=1.0, min_zoom=0.9, max_zoom=1.0, padding_mode='constant', mode=["area"]),
                 # RandFlipdict(keys=["image3d"], prob=0.5, spatial_axis=0),
                 # RandFlipdict(keys=["image3d"], prob=0.5, spatial_axis=1),
                 # RandScaleCropDict(keys=["image3d"],
@@ -242,10 +242,8 @@ class UnpairedDataModule(LightningDataModule):
                 # RandAffineDict(keys=["image3d"], rotate_range=None, shear_range=None, translate_range=20, scale_range=None),
                 # CropForegroundDict(keys=["image3d"], source_key="image3d", select_fn=lambda x: x>0, margin=0),
                 # CropForegroundDict(keys=["image2d"], source_key="image2d", select_fn=lambda x: x>0, margin=0),
-                # ZoomDict(keys=["image3d"], zoom=0.9, padding_mode="constant", mode=["area"]),
-                ZoomDict(
-                    keys=["image2d"], zoom=0.9, padding_mode="constant", mode=["area"]
-                ),
+                ZoomDict(keys=["image3d"], zoom=0.9, padding_mode="constant", mode=["area"]),
+                ZoomDict(keys=["image2d"], zoom=0.8, padding_mode="constant", mode=["area"]),
                 ResizeDict(
                     keys=["image3d"],
                     spatial_size=self.vol_shape,
@@ -350,10 +348,8 @@ class UnpairedDataModule(LightningDataModule):
                     select_fn=(lambda x: x > 0),
                     margin=0,
                 ),
-                # ZoomDict(keys=["image3d"], zoom=0.9, padding_mode="constant", mode=["area"]),
-                ZoomDict(
-                    keys=["image2d"], zoom=0.9, padding_mode="constant", mode=["area"]
-                ),
+                ZoomDict(keys=["image3d"], zoom=0.9, padding_mode="constant", mode=["area"]),
+                ZoomDict(keys=["image2d"], zoom=0.8, padding_mode="constant", mode=["area"]),
                 ResizeDict(
                     keys=["image3d"],
                     spatial_size=self.vol_shape,

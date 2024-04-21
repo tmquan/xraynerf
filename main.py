@@ -83,7 +83,7 @@ from pytorch3d.renderer.implicit.raymarching import (
 )
 
 from monai.losses import PerceptualLoss
-from monai.networks.nets import Unet
+from monai.networks.nets import UNet
 from monai.networks.layers.factories import Norm
 from generative.networks.nets import DiffusionModelUNet
 
@@ -171,6 +171,20 @@ class InverseXrayVolumeRenderer(nn.Module):
             cross_attention_dim=12,  # flatR | flatT
         )    
         init_weights(self.net2d3d, init_type='kaiming', init_gain=0.02)
+        
+        self.net3d3d = UNet(
+            spatial_dims=3,
+            in_channels=1,
+            out_channels=1,
+            channels=(256, 256, 512),
+            strides=(2, 2, 2, 2),
+            num_res_units=1,
+            kernel_size=3,
+            up_kernel_size=3,
+            act=("LeakyReLU", {"inplace": True}),
+            norm=Norm.BATCH,
+            dropout=0.5,
+        )
 
     def forward(
         self,
@@ -220,6 +234,7 @@ class InverseXrayVolumeRenderer(nn.Module):
                 align_corners=True,
             )
             volumes = torch.permute(values, [0, 1, 4, 3, 2])
+            volumes = self.net3d3d(volumes)
             # scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
             # interp = []
             # for scene_, n_view in zip(scenes, n_views):
