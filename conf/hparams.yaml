@@ -58,9 +58,9 @@ model:
   phase: "ctproj" #"pixelnerf" "ctproj" #"ctxray"
   img_shape: ${data.img_shape}
   vol_shape: ${data.vol_shape}
-  fov_depth: 512
   batch_size: ${data.batch_size}
   n_pts_per_ray: 512
+  fov_depth: 512
   min_depth: 6.0
   max_depth: 10.0
   ndc_extent: 1.0
@@ -89,6 +89,7 @@ trainer:
   strategy: auto
   max_epochs: ${train.epochs}
   enable_model_summary: true
+  # amp_backend: apex
 
 callbacks:
   - _target_: lightning.pytorch.callbacks.ModelCheckpoint

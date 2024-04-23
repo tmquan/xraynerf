@@ -110,7 +110,7 @@ def make_cameras_dea(
     return FoVPerspectiveCameras(R=R, T=T, fov=fov, znear=znear, zfar=zfar).to(_device)
 
 
-def init_weights(net, init_type='normal', init_gain=0.02):
+# def init_weights(net, init_type='normal', init_gain=0.02):
     """Initialize network weights.
     Parameters:
         net (network)   -- network to be initialized
@@ -170,7 +170,7 @@ class InverseXrayVolumeRenderer(nn.Module):
             with_conditioning=True,
             cross_attention_dim=12,  # flatR | flatT
         )    
-        init_weights(self.net2d3d, init_type='kaiming', init_gain=0.02)
+        # init_weights(self.net2d3d, init_type='kaiming', init_gain=0.02)
         
         self.net3d3d = UNet(
             spatial_dims=3,
@@ -182,10 +182,11 @@ class InverseXrayVolumeRenderer(nn.Module):
             kernel_size=3,
             up_kernel_size=3,
             act=("LeakyReLU", {"inplace": True}),
-            norm=Norm.BATCH,
+            norm=Norm.INSTANCE,
             dropout=0.5,
         )
-
+        # init_weights(self.net3d3d, init_type='kaiming', init_gain=0.02)
+        
     def forward(
         self,
         image2d,
@@ -233,8 +234,8 @@ class InverseXrayVolumeRenderer(nn.Module):
                 padding_mode="border", 
                 align_corners=True,
             )
-            volumes = torch.permute(values, [0, 1, 4, 3, 2])
-            volumes = self.net3d3d(volumes)
+            results = torch.permute(values, [0, 1, 4, 3, 2])
+            volumes = self.net3d3d(results) + results
             # scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
             # interp = []
             # for scene_, n_view in zip(scenes, n_views):
@@ -273,20 +274,20 @@ class NVLightningModule(LightningModule):
             vol_shape=self.model_cfg.vol_shape,
             fov_depth=self.model_cfg.fov_depth,
         )
+        if self.model_cfg.phase=="ctxray":
+            self.p2dloss = PerceptualLoss(
+                spatial_dims=2,
+                network_type="radimagenet_resnet50",
+                is_fake_3d=False,
+                pretrained=True,
+            )
 
-        self.p2dloss = PerceptualLoss(
-            spatial_dims=2,
-            network_type="radimagenet_resnet50",
-            is_fake_3d=False,
-            pretrained=True,
-        )
-
-        self.p3dloss = PerceptualLoss(
-            spatial_dims=3,
-            network_type="medicalnet_resnet50_23datasets",
-            is_fake_3d=False,
-            pretrained=True,
-        )
+            self.p3dloss = PerceptualLoss(
+                spatial_dims=3,
+                network_type="medicalnet_resnet50_23datasets",
+                is_fake_3d=False,
+                pretrained=True,
+            )
 
         if self.train_cfg.ckpt:
             print("Loading.. ", self.train_cfg.ckpt)
@@ -417,12 +418,13 @@ class NVLightningModule(LightningModule):
                       + F.l1_loss(figure_ct_origin_second_second, figure_ct_second) \
                     #   + F.l1_loss(figure_xr_origin_hidden_hidden, image2d) \
 
-            pc3d_loss = self.p3dloss(volume_xr_hidden_origin, image3d)
-            im3d_loss += self.train_cfg.lamda * pc3d_loss
+            if self.model_cfg.phase=="ctxray":
+                pc3d_loss = self.p3dloss(volume_xr_hidden_origin.float(), image3d.float())
+                im3d_loss += self.train_cfg.lamda * pc3d_loss
 
-            pc2d_loss = self.p2dloss(figure_xr_origin_hidden_random, figure_ct_random) \
-                      + self.p2dloss(figure_xr_origin_hidden_hidden, image2d)
-            im2d_loss += self.train_cfg.lamda * pc2d_loss
+                pc2d_loss = self.p2dloss(figure_xr_origin_hidden_random.float(), figure_ct_random.float()) \
+                          + self.p2dloss(figure_xr_origin_hidden_hidden.float(), image2d.float())
+                im2d_loss += self.train_cfg.lamda * pc2d_loss
 
             self.log(
                 f"{stage}_im3d_loss",
