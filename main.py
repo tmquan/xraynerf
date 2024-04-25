@@ -110,7 +110,7 @@ def make_cameras_dea(
     return FoVPerspectiveCameras(R=R, T=T, fov=fov, znear=znear, zfar=zfar).to(_device)
 
 
-# def init_weights(net, init_type='normal', init_gain=0.02):
+def init_weights(net, init_type='normal', init_gain=0.02):
     """Initialize network weights.
     Parameters:
         net (network)   -- network to be initialized
@@ -170,12 +170,12 @@ class InverseXrayVolumeRenderer(nn.Module):
             with_conditioning=True,
             cross_attention_dim=12,  # flatR | flatT
         )    
-        # init_weights(self.net2d3d, init_type='kaiming', init_gain=0.02)
+        # init_weights(self.net2d3d, init_type='xavier', init_gain=0.02)
         
         self.net3d3d = UNet(
             spatial_dims=3,
             in_channels=1,
-            out_channels=1,
+            out_channels=6,
             channels=(256, 256, 512),
             strides=(2, 2, 2, 2),
             num_res_units=1,
@@ -185,7 +185,7 @@ class InverseXrayVolumeRenderer(nn.Module):
             norm=Norm.INSTANCE,
             dropout=0.5,
         )
-        # init_weights(self.net3d3d, init_type='kaiming', init_gain=0.02)
+        # init_weights(self.net3d3d, init_type='xavier', init_gain=0.02)
         
     def forward(
         self,
@@ -218,7 +218,7 @@ class InverseXrayVolumeRenderer(nn.Module):
         image2d = torch.flip(image2d, [3])
 
         density = self.net2d3d(x=image2d, context=mat.reshape(B, 1, -1), timesteps=timesteps)
-        density = density.view(-1, 1, self.fov_depth, self.img_shape, self.img_shape)
+        density = density.view(-1, 1, self.fov_depth, self.img_shape, self.img_shape).nan_to_num_()
         
         if resample:
             z = torch.linspace(-1.0, 1.0, steps=self.vol_shape, device=_device)
@@ -228,14 +228,28 @@ class InverseXrayVolumeRenderer(nn.Module):
             # Process (resample) the volumes from ray views to ndc
             points = cameras.transform_points_ndc(coords)  # world to ndc, 1 DHW 3
             values = F.grid_sample(
-                density, 
-                points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3), 
+                density.float(), 
+                points.view(-1, self.vol_shape, self.vol_shape, self.vol_shape, 3).float(), 
                 mode="bilinear", 
                 padding_mode="border", 
                 align_corners=True,
             )
-            results = torch.permute(values, [0, 1, 4, 3, 2])
-            volumes = self.net3d3d(results) + results
+            results = torch.permute(values, [0, 1, 4, 3, 2]).nan_to_num_().float()
+            volumes = self.net3d3d(results) 
+            volumes = (
+                torch.concat(
+                    [
+                        torch.permute(volumes[:, [0], ...], (0, 1, 2, 3, 4)),
+                        torch.permute(volumes[:, [1], ...], (0, 1, 2, 4, 3)),
+                        torch.permute(volumes[:, [2], ...], (0, 1, 3, 2, 4)),
+                        torch.permute(volumes[:, [3], ...], (0, 1, 3, 4, 2)),
+                        torch.permute(volumes[:, [4], ...], (0, 1, 4, 2, 3)),
+                        torch.permute(volumes[:, [5], ...], (0, 1, 4, 3, 2)),
+                        results, 
+                    ],
+                    dim=1,
+                ).mean(dim=1, keepdim=True)
+            )
             # scenes = torch.split(values, split_size_or_sections=n_views, dim=0)  # 31SHW = [21SHW, 11SHW]
             # interp = []
             # for scene_, n_view in zip(scenes, n_views):
@@ -445,7 +459,8 @@ class NVLightningModule(LightningModule):
                 batch_size=B,
             )
 
-            loss = self.train_cfg.alpha * im3d_loss + self.train_cfg.gamma * im2d_loss
+            loss = self.train_cfg.alpha * im3d_loss.nan_to_num_(1.0)\
+                 + self.train_cfg.gamma * im2d_loss.nan_to_num_(1.0)
 
             # Visualization step
             if batch_idx == 0:
